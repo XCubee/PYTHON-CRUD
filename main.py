@@ -9,10 +9,99 @@ import json
 from database import db
 from crud import UserCRUD
 import logging
+from flask import Flask, render_template, request, redirect, url_for, flash
+from models import Info
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Suppress SQLAlchemy, Flask, and Werkzeug output except for the localhost link
+logging.getLogger('sqlalchemy.engine').setLevel(logging.ERROR)
+logging.getLogger('flask.app').setLevel(logging.ERROR)
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+# Optionally, set Flask to production mode to reduce output
+os.environ['FLASK_ENV'] = 'production'
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev')
+
+# Connect to the database at startup
+with app.app_context():
+    db.connect()
+    db.create_tables()
+
+@app.route('/')
+def index():
+    session = db.get_session()
+    infos = session.query(Info).all()
+    session.close()
+    return render_template('index.html', infos=infos)
+
+@app.route('/add', methods=['GET', 'POST'])
+def add_info():
+    if request.method == 'POST':
+        name = request.form['name']
+        email = request.form['email']
+        phone = request.form.get('phone')
+        address = request.form.get('address')
+        session = db.get_session()
+        info = Info(name=name, email=email, phone=phone, address=address)
+        session.add(info)
+        try:
+            session.commit()
+            flash('Info added successfully!', 'success')
+        except Exception as e:
+            session.rollback()
+            flash(f'Error: {str(e)}', 'danger')
+        finally:
+            session.close()
+        return redirect(url_for('index'))
+    return render_template('add_user.html')
+
+@app.route('/edit/<int:info_id>', methods=['GET', 'POST'])
+def edit_info(info_id):
+    session = db.get_session()
+    info = session.query(Info).get(info_id)
+    if not info:
+        session.close()
+        flash('Info not found.', 'danger')
+        return redirect(url_for('index'))
+    if request.method == 'POST':
+        info.name = request.form['name']
+        info.email = request.form['email']
+        info.phone = request.form.get('phone')
+        info.address = request.form.get('address')
+        try:
+            session.commit()
+            flash('Info updated successfully!', 'success')
+        except Exception as e:
+            session.rollback()
+            flash(f'Error: {str(e)}', 'danger')
+        finally:
+            session.close()
+        return redirect(url_for('index'))
+    session.close()
+    return render_template('edit_user.html', user=info)
+
+@app.route('/delete/<int:info_id>', methods=['POST'])
+def delete_info(info_id):
+    session = db.get_session()
+    info = session.query(Info).get(info_id)
+    if info:
+        session.delete(info)
+        try:
+            session.commit()
+            flash('Info deleted successfully!', 'success')
+        except Exception as e:
+            session.rollback()
+            flash(f'Error: {str(e)}', 'danger')
+    else:
+        flash('Info not found.', 'danger')
+    session.close()
+    return redirect(url_for('index'))
 
 def print_menu():
     """Display the main menu"""
@@ -197,18 +286,6 @@ def main():
     """Main application function"""
     print("🚀 Starting User Management System...")
     
-    # Connect to database
-    if not db.connect():
-        print("❌ Failed to connect to database. Please check your configuration.")
-        sys.exit(1)
-    
-    # Create tables
-    if not db.create_tables():
-        print("❌ Failed to create tables.")
-        sys.exit(1)
-    
-    print("✅ Database connected and tables created successfully!")
-    
     # Create CRUD instance
     session = db.get_session()
     crud = UserCRUD(session)
@@ -249,4 +326,5 @@ def main():
         db.close()
 
 if __name__ == "__main__":
-    main() 
+    print(' * Running on http://127.0.0.1:5000')
+    app.run(debug=False) 
